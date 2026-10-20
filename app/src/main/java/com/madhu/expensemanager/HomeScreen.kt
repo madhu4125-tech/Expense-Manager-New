@@ -108,7 +108,7 @@ fun HomeScreen(vm: ExpenseViewModel, dark: Boolean) {
                 Header(
                     dark = dark,
                     filter = vm.filter,
-                    onFilter = { vm.setFilter(it) },
+                    onFilter = { vm.updateFilter(it) },
                     income = income,
                     expense = expense,
                     onTheme = { vm.setDark(!dark) },
@@ -123,7 +123,7 @@ fun HomeScreen(vm: ExpenseViewModel, dark: Boolean) {
                     SummaryCard(
                         rows = rows,
                         view = vm.summaryView,
-                        onView = { vm.setSummaryView(it) },
+                        onView = { vm.updateSummaryView(it) },
                         modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp),
                     )
                 }

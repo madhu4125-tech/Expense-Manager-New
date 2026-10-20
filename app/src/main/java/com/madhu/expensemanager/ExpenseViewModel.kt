@@ -72,12 +72,12 @@ class ExpenseViewModel(app: Application) : AndroidViewModel(app) {
 
     /* ---------- settings ---------- */
 
-    fun setFilter(f: String) {
+    fun updateFilter(f: String) {
         filter = f
         prefs.edit().putString("filter", f).apply()
     }
 
-    fun setSummaryView(v: String) {
+    fun updateSummaryView(v: String) {
         summaryView = v
         prefs.edit().putString("summaryView", v).apply()
     }
