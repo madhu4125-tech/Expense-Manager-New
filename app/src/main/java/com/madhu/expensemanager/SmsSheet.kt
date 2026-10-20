@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,6 +35,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SelectableDates
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -68,6 +70,13 @@ import java.util.Locale
 
 private val smsDateFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.forLanguageTag("en-IN"))
 private val smsRowDateFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM, h:mm a", Locale.forLanguageTag("en-IN"))
+
+private const val RESTRICTED_HELP =
+    "Android blocked SMS access. On Android 13 and newer, apps installed from outside the Play Store need one extra step: " +
+        "open App info, tap the ⋮ menu, choose Allow restricted settings, then Permissions > SMS > Allow."
+
+private fun isGranted(context: Context, permission: String): Boolean =
+    ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
 private fun hasSmsPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
@@ -111,6 +120,13 @@ fun SmsImportSheet(vm: ExpenseViewModel, onDismiss: () -> Unit) {
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         granted = ok
         denied = !ok
+    }
+
+    var autoDenied by remember { mutableStateOf(false) }
+    val autoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        val ok = isGranted(context, Manifest.permission.RECEIVE_SMS)
+        vm.updateSmsAuto(ok)
+        autoDenied = !ok
     }
 
     val today = LocalDate.now()
@@ -166,16 +182,62 @@ fun SmsImportSheet(vm: ExpenseViewModel, onDismiss: () -> Unit) {
             )
             Spacer(Modifier.height(16.dp))
 
+            // ----- live capture -----
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(cs.surfaceVariant)
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Auto-add new bank SMS", fontWeight = FontWeight.Bold, color = cs.onSurface)
+                    Text(
+                        "Adds each bank or UPI alert as it arrives, even when the app is closed, and shows a notification with Undo.",
+                        fontSize = 12.sp,
+                        color = cs.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.size(12.dp))
+                Switch(checked = vm.smsAuto, onCheckedChange = { on ->
+                    if (!on) {
+                        vm.updateSmsAuto(false)
+                    } else {
+                        val needed = buildList {
+                            add(Manifest.permission.RECEIVE_SMS)
+                            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+                        }.filter { !isGranted(context, it) }
+                        if (needed.isEmpty()) vm.updateSmsAuto(true) else autoLauncher.launch(needed.toTypedArray())
+                    }
+                })
+            }
+            if (autoDenied) {
+                Spacer(Modifier.height(8.dp))
+                Text(RESTRICTED_HELP, fontSize = 13.sp, color = cs.onSurfaceVariant)
+                TextButton(onClick = {
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                    )
+                }) { Text("Open app settings") }
+            }
+            if (vm.smsAuto && Build.VERSION.SDK_INT >= 33 && !isGranted(context, Manifest.permission.POST_NOTIFICATIONS)) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Notifications are off for this app, so you won't see the Undo prompt. Transactions are still added.",
+                    fontSize = 12.sp,
+                    color = cs.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+            Text("Import older messages", fontWeight = FontWeight.Bold, color = cs.onSurface)
+            Spacer(Modifier.height(12.dp))
+
             if (!granted) {
                 PrimaryButton("Allow SMS access") { permLauncher.launch(Manifest.permission.READ_SMS) }
                 if (denied) {
                     Spacer(Modifier.height(12.dp))
-                    Text(
-                        "Android blocked SMS access. On Android 13 and newer, apps installed from outside the Play Store need one extra step: " +
-                            "open App info, tap the ⋮ menu, choose Allow restricted settings, then Permissions > SMS > Allow.",
-                        fontSize = 13.sp,
-                        color = cs.onSurfaceVariant,
-                    )
+                    Text(RESTRICTED_HELP, fontSize = 13.sp, color = cs.onSurfaceVariant)
                     Row {
                         TextButton(onClick = {
                             context.startActivity(

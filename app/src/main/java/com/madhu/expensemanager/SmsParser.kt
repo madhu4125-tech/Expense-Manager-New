@@ -139,6 +139,15 @@ fun suggestCategory(p: ParsedSms, body: String, cats: List<Cat>, rules: Map<Stri
     return OTHERS
 }
 
+/** Same message => same key, whether it was captured live or found later by a scan (day-level, so clock differences don't matter). */
+fun smsKey(sender: String, body: String, dateMillis: Long): String {
+    val day = java.time.Instant.ofEpochMilli(dateMillis).atZone(zone).toLocalDate()
+    return "$sender|${body.trim().hashCode()}|$day"
+}
+
+fun smsNote(p: ParsedSms, sender: String): String =
+    p.merchant.ifEmpty { sender.replace(Regex("^[A-Za-z]{2}-"), "") }
+
 fun scanSms(
     context: Context,
     fromMillis: Long,
@@ -155,13 +164,13 @@ fun scanSms(
         // bank / UPI alerts come from named senders like "VM-HDFCBK"; plain phone numbers are people
         if (!m.sender.any { it.isLetter() }) continue
         val p = parseSms(m.body) ?: continue
-        val key = "${m.dateMillis}|${m.sender}|${m.body.hashCode()}"
+        val key = smsKey(m.sender, m.body, m.dateMillis)
         if (!seen.add(key)) continue
         if (key in importedKeys) {
             already++
             continue
         }
-        val note = p.merchant.ifEmpty { m.sender.replace(Regex("^[A-Za-z]{2}-"), "") }
+        val note = smsNote(p, m.sender)
         items.add(
             SmsCandidate(
                 key = key,

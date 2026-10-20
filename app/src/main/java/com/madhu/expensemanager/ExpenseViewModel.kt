@@ -20,7 +20,12 @@ sealed class ImportResult {
 
 class ExpenseViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val prefs: SharedPreferences = app.getSharedPreferences("expenses", Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = appPrefs(app)
+
+    // the background SMS receiver writes straight to storage; reload when that happens
+    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "transactions") transactions = readTransactions(prefs)
+    }
 
     var transactions by mutableStateOf(loadTransactions())
         private set
@@ -34,41 +39,32 @@ class ExpenseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var lastMethod by mutableStateOf(prefs.getString("lastMethod", METHODS[0].name) ?: METHODS[0].name)
         private set
+    var smsAuto by mutableStateOf(prefs.getBoolean("smsAuto", false))
+        private set
+
+    init {
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener)
+    }
+
+    override fun onCleared() {
+        prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        super.onCleared()
+    }
+
+    fun updateSmsAuto(on: Boolean) {
+        smsAuto = on
+        prefs.edit().putBoolean("smsAuto", on).apply()
+    }
 
     /* ---------- load / save ---------- */
 
-    private fun loadTransactions(): List<Tx> = try {
-        val arr = JSONArray(prefs.getString("transactions", "[]"))
-        (0 until arr.length()).mapNotNull { txFromJson(arr.optJSONObject(it)) }.distinctBy { it.id }
-    } catch (e: Exception) {
-        emptyList()
-    }
+    private fun loadTransactions(): List<Tx> = readTransactions(prefs)
 
-    private fun loadCategories(): List<Cat> {
-        try {
-            val s = prefs.getString("categories", null)
-            if (s != null) {
-                val arr = JSONArray(s)
-                val clean = (0 until arr.length()).mapNotNull { catFromJson(arr.optJSONObject(it)) }
-                if (clean.isNotEmpty()) return normalizeCats(clean)
-            }
-        } catch (e: Exception) {
-            // fall through to defaults
-        }
-        return normalizeCats(DEFAULT_CATS)
-    }
+    private fun loadCategories(): List<Cat> = readCategories(prefs)
 
-    private fun persistTransactions() {
-        val arr = JSONArray()
-        transactions.forEach { arr.put(it.toJson()) }
-        prefs.edit().putString("transactions", arr.toString()).apply()
-    }
+    private fun persistTransactions() = writeTransactions(prefs, transactions)
 
-    private fun persistCategories() {
-        val arr = JSONArray()
-        categories.forEach { arr.put(it.toJson()) }
-        prefs.edit().putString("categories", arr.toString()).apply()
-    }
+    private fun persistCategories() = writeCategories(prefs, categories)
 
     /* ---------- settings ---------- */
 
@@ -180,42 +176,13 @@ class ExpenseViewModel(app: Application) : AndroidViewModel(app) {
 
     /* ---------- SMS import ---------- */
 
-    /** keys of SMS that were already imported, so the same message is never added twice */
-    fun importedSmsKeys(): Set<String> = prefs.getStringSet("smsKeys", null)?.toSet() ?: emptySet()
+    fun importedSmsKeys(): Set<String> = readSmsKeys(prefs)
 
-    /** merchant -> category choices remembered from earlier imports */
-    fun smsRules(): Map<String, String> = try {
-        val o = JSONObject(prefs.getString("smsRules", "{}") ?: "{}")
-        o.keys().asSequence().associateWith { o.optString(it) }
-    } catch (e: Exception) {
-        emptyMap()
-    }
+    fun smsRules(): Map<String, String> = readSmsRules(prefs)
 
     fun addSmsTransactions(items: List<SmsCandidate>) {
-        if (items.isEmpty()) return
-        val used = transactions.map { it.id }.toMutableSet()
-        var next = System.currentTimeMillis()
-        val added = items.map { c ->
-            while (next in used) next++
-            used.add(next)
-            val cat = categories.firstOrNull { it.name == c.catName } ?: categories.last()
-            Tx(next, c.amount, c.type, cat.label, c.method, c.note, c.dateMillis)
-        }
-        transactions = added + transactions
-        persistTransactions()
-
-        val keys = importedSmsKeys().toMutableSet()
-        items.forEach { keys.add(it.key) }
-
-        val rules = try {
-            JSONObject(prefs.getString("smsRules", "{}") ?: "{}")
-        } catch (e: Exception) {
-            JSONObject()
-        }
-        items.forEach { c ->
-            if (c.note.isNotBlank() && c.catName != OTHERS) rules.put(c.note.lowercase(), c.catName)
-        }
-        prefs.edit().putStringSet("smsKeys", keys).putString("smsRules", rules.toString()).apply()
+        appendSmsItems(prefs, items)
+        transactions = readTransactions(prefs)
     }
 
     /* ---------- backup / import ---------- */
